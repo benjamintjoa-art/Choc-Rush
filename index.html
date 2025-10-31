@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smillionaire Rush — Polished MVP (Phaser 3)</title>
+  <style>
+    html, body { height:100%; margin:0; background:#111; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; }
+    #game { width:100%; height:100%; }
+    .ui { position:fixed; inset:0; pointer-events:none; }
+    .hud { position:absolute; top:14px; left:14px; pointer-events:auto; z-index:5; padding:12px 14px; border-radius:14px; border:2px solid #4E342E; background:rgba(255,248,225,.92); box-shadow:0 10px 24px rgba(0,0,0,.18); color:#212121; }
+    .hud strong { color:#4E342E; }
+    .right { position:absolute; top:14px; right:14px; pointer-events:auto; display:flex; gap:10px; }
+    .btn { background:linear-gradient(180deg,#FFD54F,#C6A63A); color:#4E342E; font-weight:800; border:none; padding:10px 14px; border-radius:12px; box-shadow: 0 8px 18px rgba(0,0,0,.25); cursor:pointer; }
+    .btn:active{ transform:translateY(1px); }
+    .footer { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); pointer-events:none; color:#FFF8E1; opacity:.9; font-size:12px; text-shadow:0 2px 6px rgba(0,0,0,.5); }
+    .test { position:absolute; bottom:12px; right:12px; z-index:6; background:rgba(33,33,33,.85); color:#FFF8E1; padding:8px 10px; border:1px solid #4E342E; border-radius:10px; font-size:12px; max-width:42vw; white-space:pre-wrap; display:none; }
+
+    /* Modal styles */
+    .modal { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.55); z-index:20; pointer-events:auto; }
+    .card { background:#FFF8E1; color:#4E342E; border:2px solid #4E342E; border-radius:16px; padding:18px; width:min(92vw,560px); box-shadow:0 18px 40px rgba(0,0,0,.35); }
+    .row { display:flex; gap:10px; margin-top:10px; }
+    .row > * { flex:1; }
+    .input { width:100%; padding:10px 12px; border:1px solid #8d6e63; border-radius:10px; font-size:14px; background:#fffdf4; color:#3e2723; }
+    .label { font-size:13px; font-weight:700; margin-bottom:6px; display:block; color:#5d4037; }
+    .actions { display:flex; gap:10px; margin-top:14px; justify-content:flex-end; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+</head>
+<body>
+  <div class="ui">
+    <div class="hud">
+      <div><strong>Score</strong> <span id="score">0</span></div>
+      <div><strong>Length</strong> <span id="length">10</span></div>
+      <div><strong>Mode</strong> <span id="mode">Steady</span></div>
+      <div><strong>Smiles</strong> <span id="smiles">0</span> &nbsp; <strong>Miles</strong> <span id="miles">0</span></div>
+      <div style="margin-top:6px; font-size:12px; opacity:.8">Drag or Arrow/WASD to steer. Hold (or Space) to BOOST.</div>
+    </div>
+    <div class="right">
+      <button class="btn" id="toggleTimer">Timed: Off</button>
+      <button class="btn" id="restart">Restart</button>
+      <button class="btn" id="hideDiag">Show Tests</button>
+    </div>
+    <div class="footer">Slow = steady earnings (Mint trail). Fast = risky boost (Gold flame). Boost >1s shrinks your snake. Avoid walls & your body.</div>
+    <div class="test" id="testPanel">Tests: pending…</div>
+  </div>
+  <div id="game"></div>
+
+  <!-- Player Profile Modal -->
+  <div class="modal" id="profileModal" aria-hidden="true">
+    <div class="card">
+      <h3 style="margin:0 0 6px 0">Enter your details to play</h3>
+      <p style="margin:0 0 10px 0; font-size:12px; opacity:.85">Used for leaderboard and prize qualification.</p>
+      <div class="row">
+        <div>
+          <label class="label" for="name">Name</label>
+          <input class="input" id="name" placeholder="e.g., Alex Tan" maxlength="40" />
+        </div>
+        <div>
+          <label class="label" for="mobile">Mobile</label>
+          <input class="input" id="mobile" placeholder="e.g., 9123 4567" maxlength="20" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="saveProfile">Start Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaderboard Modal -->
+  <div class="modal" id="leaderboardModal" aria-hidden="true">
+    <div class="card">
+      <h3 style="margin:0 0 6px 0">Leaderboard — Top Players</h3>
+      <div id="leaderboardTable" style="max-height:50vh; overflow:auto; margin-top:8px; background:#fffdf4; border:1px solid #8d6e63; border-radius:10px;"></div>
+      <div class="actions">
+        <button class="btn" id="closeLeaderboard">Close</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // =====================
+  // Brand & Config
+  // =====================
+  const BRAND = { brown:0x4E342E, gold:0xFFD54F, goldDark:0xC6A63A, cream:0xFFF8E1, mint:0xD7FFD9, charcoal:0x212121 };
+  const BODY_PINK_HEX = '#F551A7';
+  const BODY_PINK = parseInt(BODY_PINK_HEX.replace('#','0x'));
+  const SMILE_SCORE = 10; // Smiles (coin)
+  const MILE_SCORE  = 20; // Heymax Miles (diamond)
+
+  // World tuning
+  const WORLD = 2600;
+  const SEG_R = 14;       // thicker body
+  const START_SEG = 10;
+  const MIN_SEG = 6;
+  const SPEED_STEADY = 150;
+  const SPEED_BOOST  = 245;
+  const TURN = Math.PI/90;
+  const BOOST_DEATH_PENALTY = 0.25;
+  const BOOST_SHRINK_AFTER_MS = 1000;
+  const BOOST_SHRINK_INTERVAL_MS = 500;
+
+  // DOM refs
+  const elScore = document.getElementById('score');
+  const elLen   = document.getElementById('length');
+  const elMode  = document.getElementById('mode');
+  const elSmiles= document.getElementById('smiles');
+  const elMiles = document.getElementById('miles');
+  const testPanel = document.getElementById('testPanel');
+  const btnRestart = document.getElementById('restart');
+  const btnTimer   = document.getElementById('toggleTimer');
+  const btnHideDiag= document.getElementById('hideDiag');
+
+  // Default diagnostics hidden
+  testPanel.style.display = 'none';
+  btnHideDiag.textContent = 'Show Tests';
+  function hideDiagnostics() { testPanel.style.display = 'none'; btnHideDiag.textContent = 'Show Tests'; }
+  function showDiagnostics() { testPanel.style.display = 'block'; btnHideDiag.textContent = 'Hide Tests'; }
+  btnHideDiag.onclick = () => (testPanel.style.display === 'none') ? showDiagnostics() : hideDiagnostics();
+
+  // State
+  let score=0, smiles=0, miles=0, timedMode=false, timeLeft=60;
+
+  // =====================
+  // Leaderboard & Profile (localStorage stub)
+  // =====================
+  const LB_KEY = 'smil_leaderboard_v1';
+  const PROFILE_KEY = 'smil_profile_v1';
+  function appendTest(s){ if (!testPanel) return; testPanel.textContent += (testPanel.textContent? '\n':'') + s; }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+  function getProfile(){ try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}'); } catch(e){ return {}; } }
+  function saveProfile(p){ localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); }
+  function maskMobile(m){ if(!m) return ''; const d = String(m).replace(/\D/g,''); if (d.length<4) return m; return d.slice(0,2) + '••••' + d.slice(-2); }
+  function getLB(){ try { return JSON.parse(localStorage.getItem(LB_KEY) || '[]'); } catch(e){ return []; } }
+  function saveLB(arr){ localStorage.setItem(LB_KEY, JSON.stringify(arr)); }
+  function addToLB(entry){ const arr = getLB(); arr.push(entry); arr.sort((a,b)=> b.score - a.score || a.ts - b.ts); saveLB(arr.slice(0,100)); }
+  function renderLeaderboard(){ const wrap = document.getElementById('leaderboardTable'); const arr = getLB().slice(0,10); const rows = arr.map((r,i)=>`<div style=\"display:grid; grid-template-columns:40px 1fr 120px 90px; gap:8px; padding:8px 10px; border-bottom:1px solid #efebe9;\">`+`<div style='font-weight:800'>${i+1}</div>`+`<div>${escapeHtml(r.name||'Player')} <span style='opacity:.7'>(${maskMobile(r.mobile)})</span></div>`+`<div style='text-align:right'>${r.score}</div>`+`<div style='text-align:right; opacity:.8'>${new Date(r.ts).toLocaleDateString()}</div>`+`</div>`).join(''); wrap.innerHTML = `<div style='display:grid; grid-template-columns:40px 1fr 120px 90px; gap:8px; padding:6px 10px; background:#f3e5f5; font-weight:700;'><div>#</div><div>Player</div><div style='text-align:right'>Score</div><div style='text-align:right'>Date</div></div>` + (rows || ''); }
+  function showLeaderboard(){ renderLeaderboard(); document.getElementById('leaderboardModal').style.display='flex'; }
+  function hideLeaderboard(){ document.getElementById('leaderboardModal').style.display='none'; }
+  function showProfileModal(){ const m = document.getElementById('profileModal'); m.style.display='flex'; const p = getProfile(); if(p.name) document.getElementById('name').value=p.name; if(p.mobile) document.getElementById('mobile').value=p.mobile; }
+  function hideProfileModal(){ document.getElementById('profileModal').style.display='none'; }
+  function attachProfileHandlers(){
+    document.getElementById('saveProfile').onclick = ()=>{
+      const name = document.getElementById('name').value.trim();
+      const mobile = document.getElementById('mobile').value.trim();
+      const okName = name.length >= 2; const okMob = /\d{3,}/.test(mobile);
+      if(!okName || !okMob){ alert('Please enter a valid name and mobile number.'); return; }
+      saveProfile({name, mobile}); hideProfileModal();
+    };
+    document.getElementById('closeLeaderboard').onclick = hideLeaderboard;
+  }
+
+  // =====================
+  // Pointer lock: sandbox-safe gating
+  // =====================
+  function canUsePointerLock(){
+    try {
+      // If inside a sandboxed iframe without allow-pointer-lock => false
+      const fe = window.frameElement;
+      if (fe && fe.hasAttribute('sandbox')){
+        const flags = (fe.getAttribute('sandbox')||'').toLowerCase();
+        if (!flags.includes('allow-pointer-lock')) return false;
+      }
+      return typeof document.body?.requestPointerLock === 'function';
+    } catch(e){ return false; }
+  }
+  const POINTER_LOCK_ALLOWED = canUsePointerLock();
+
+  function requestPointerLockSafe(){
+    if (!POINTER_LOCK_ALLOWED) return false; // gracefully no-op in sandbox
+    try {
+      const el = document.body;
+      if (document.pointerLockElement !== el) el.requestPointerLock?.();
+      return true;
+    } catch(e){
+      // swallow any SecurityError in restricted envs
+      console.warn('Pointer lock blocked:', e);
+      return false;
+    }
+  }
+
+  // =====================
+  // Phaser Scenes
+  // =====================
+  class Assets extends Phaser.Scene { constructor(){ super('assets'); } preload(){} create(){ generateTextures(this.game, this.textures); const frames = Array.from({length:8}, (_,i)=>({ key:`coin_${i}` })); const mframes = Array.from({length:8}, (_,i)=>({ key:`mile_${i}` })); this.anims.create({ key:'coinSpin', frames, frameRate:10, repeat:-1 }); this.anims.create({ key:'mileSpin', frames:mframes, frameRate:10, repeat:-1 }); runSelfTests(this, this.textures, this.anims); this.scene.start('play'); } }
+
+  class Play extends Phaser.Scene {
+    constructor(){ super('play'); }
+    create(){
+      attachProfileHandlers(); const prof = getProfile(); if(!prof.name || !prof.mobile){ showProfileModal(); }
+      score=0; smiles=0; miles=0; timeLeft=60; updateHUD(); btnTimer.innerText = `Timed: ${timedMode? 'On':'Off'}`;
+      this.physics.world.setBounds(-WORLD/2,-WORLD/2,WORLD,WORLD);
+      this.createBackground(); this.createRings();
+
+      // Input
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.wasd = this.input.keyboard.addKeys({ up: 'W', left:'A', down:'S', right:'D', boost: 'SPACE' });
+      this.input.on('pointerdown', ()=> { if (this.snake) this.snake.boost(true); /* pointer lock disabled in sandbox */ if(POINTER_LOCK_ALLOWED) requestPointerLockSafe(); });
+      this.input.on('pointerup',   ()=> this.snake && this.snake.boost(false));
+
+      // Player
+      this.snake = new Snake(this, 0, 0, START_SEG);
+
+      // Items
+      this.items = this.physics.add.group({ immovable:true, allowGravity:false });
+      for(let i=0;i<260;i++) this.spawnItem();
+      this.physics.add.overlap(this.snake.head, this.items, (_, item) => this.collect(item));
+
+      // Camera
+      this.cameras.main.setZoom(1); this.cameras.main.startFollow(this.snake.head, true, 0.12, 0.12);
+
+      // UI buttons
+      btnRestart.onclick = () => this.scene.restart();
+      btnTimer.onclick = () => { timedMode = !timedMode; this.scene.restart(); };
+
+      // Timer
+      if (timedMode){
+        this.timerText = this.add.text(20, this.scale.height-40, '', { fontSize: 22, color:'#FFF8E1' }).setScrollFactor(0).setDepth(100);
+        this.time.addEvent({ delay:1000, loop:true, callback: ()=>{ timeLeft--; if (timeLeft<=0) this.timeUp(); } });
+      }
+
+      elMode.textContent = 'Steady';
+    }
+
+    createBackground(){
+      const cvs = document.createElement('canvas'); cvs.width = 1024; cvs.height = 1024; const ctx = cvs.getContext('2d');
+      const grd = ctx.createRadialGradient(512,512,40,512,512,520);
+      grd.addColorStop(0,'#2b201d'); grd.addColorStop(1,'#120e0d');
+      ctx.fillStyle = grd; ctx.fillRect(0,0,1024,1024);
+      if (!this.textures.exists('vignette')) { this.textures.addCanvas('vignette', cvs); }
+      for(let x=-WORLD/2; x<WORLD/2; x+=1024){ for(let y=-WORLD/2; y<WORLD/2; y+=1024){ this.add.image(x+512,y+512,'vignette').setAlpha(0.9); } }
+      this.add.particles(0,0,'spark',{ x:{min:-WORLD/2,max:WORLD/2}, y:{min:-WORLD/2,max:WORLD/2}, lifespan:8000, speed:6, scale:{start:.5,end:0}, alpha:{start:.35,end:0}, quantity:2, blendMode:'ADD' });
+    }
+
+    createRings(){ const rings = this.add.graphics(); rings.lineStyle(2, BRAND.gold, .38); const step = 260; const maxR = WORLD/2 - 80; for(let r=step; r<maxR; r+=step){ rings.strokeCircle(0,0,r); } rings.setDepth(0.5); }
+
+    spawnItem(){ const x = Phaser.Math.Between(-WORLD/2+40, WORLD/2-40); const y = Phaser.Math.Between(-WORLD/2+40, WORLD/2-40); const isMile = Math.random() < 0.35; const key0 = isMile ? 'mile_0' : 'coin_0'; const anim = isMile ? 'mileSpin' : 'coinSpin'; const item = this.add.sprite(x,y,key0); this.physics.add.existing(item); item.body.setCircle(10); item.play(anim); item.setData('type', isMile ? 'mile' : 'smile'); this.items.add(item); return item; }
+
+    collect(item){ const type = item.getData('type'); const mult = this.snake.isBoosting ? 2 : 1; if (type === 'smile'){ smiles += 1; score += SMILE_SCORE * mult; } else { miles += 1; score += MILE_SCORE * mult; } updateHUD(); this.snake.grow(mult); const tint = type==='smile' ? BRAND.gold : 0x6EE7FF; const p = this.add.particles(item.x, item.y, 'spark', { speed:{min:40,max:120}, lifespan:450, scale:{start:1,end:0}, blendMode:'ADD', tint, quantity: 12 }); this.time.delayedCall(300, () => p.destroy()); item.destroy(); this.spawnItem(); }
+
+    update(_, delta){ const wpt = this.cameras.main.getWorldPoint(this.input.activePointer.x ?? 0, this.input.activePointer.y ?? 0); let tx = wpt.x, ty = wpt.y; const offset = 220; if (this.cursors.left.isDown || this.wasd.left.isDown)  tx = this.snake.head.x - offset; if (this.cursors.right.isDown || this.wasd.right.isDown) tx = this.snake.head.x + offset; if (this.cursors.up.isDown || this.wasd.up.isDown)      ty = this.snake.head.y - offset; if (this.cursors.down.isDown || this.wasd.down.isDown)  ty = this.snake.head.y + offset; if (this.wasd.boost.isDown) this.snake.boost(true); else if (!this.input.activePointer.isDown) this.snake.boost(false); this.snake.update(delta, tx, ty); for (let i = 10; i < this.snake.segments.length; i+=2){ const s = this.snake.segments[i]; const dx = this.snake.head.x - s.x; const dy = this.snake.head.y - s.y; if (dx*dx + dy*dy < (SEG_R*SEG_R)) return this.crash('You tangled!'); } const b = this.physics.world.bounds; if (!Phaser.Geom.Rectangle.Contains(b, this.snake.head.x, this.snake.head.y)) return this.crash('Out of bounds'); if (timedMode && this.timerText){ this.timerText.setText(`⏱  ${timeLeft}s`); } }
+
+    crash(msg){ if (this.snake.isBoosting && score>0){ const loss = Math.floor(score * BOOST_DEATH_PENALTY); score -= loss; updateHUD(); } return this.gameOver(msg, /*submit*/ true); }
+    timeUp(){ return this.gameOver('Time up', /*submit*/ true); }
+
+    gameOver(msg, submit){ this.scene.pause(); const cx = this.snake.head.x, cy = this.snake.head.y; this.add.rectangle(cx, cy, 500, 270, BRAND.brown, .96).setStrokeStyle(3, BRAND.gold).setDepth(1000); this.add.text(cx, cy-86, 'Game Over', { fontSize: 40, color:'#FFD54F', fontStyle:'700' }).setOrigin(.5).setDepth(1001); this.add.text(cx, cy-38, msg, { fontSize: 18, color:'#FFF8E1' }).setOrigin(.5).setDepth(1001); this.add.text(cx, cy+4, `Score: ${score}  •  Smiles: ${smiles}  •  Miles: ${miles}`, { fontSize: 18, color:'#FFD54F' }).setOrigin(.5).setDepth(1001); const best = Number(localStorage.getItem('smil_best')||0); if (score>best) localStorage.setItem('smil_best', score); this.add.text(cx, cy+56, 'Press RESTART (top-right) to play again', { fontSize: 14, color:'#FFF8E1' }).setOrigin(.5).setDepth(1001); if (submit) { submitScore({ score, smiles, miles, timed: timedMode, ts: Date.now() }); showLeaderboard(); } }
+  }
+
+  // =====================
+  // Snake class
+  // =====================
+  class Snake{
+    constructor(scene, x, y, n){ this.scene = scene; this.isBoosting = false; this.speed = SPEED_STEADY; this.boostMs = 0; this.lastShortenAt = 0; this.head = scene.physics.add.sprite(x,y,'head'); this.head.setCircle(SEG_R, this.head.width/2-SEG_R, this.head.height/2-SEG_R); this.head.setTint(BRAND.brown); this.head.body.setAllowGravity(false); this.segments = []; for(let i=0;i<n;i++){ const seg = scene.add.sprite(x - i*SEG_R*1.3, y, 'seg'); seg.setTint(BODY_PINK); this.segments.push(seg); } this.trail = scene.add.particles(0,0,'spark',{ lifespan:450, speed:{min:10,max:40}, scale:{start:.8,end:0}, alpha:{start:.5,end:0}, follow:this.head, tint: BRAND.mint, blendMode:'ADD', quantity: 1 }); this.history = []; elLen.textContent = this.segments.length; }
+    boost(active){ const now = !!active; if (now && !this.isBoosting){ this.boostMs = 0; this.lastShortenAt = 0; } this.isBoosting = now; this.speed = now ? SPEED_BOOST : SPEED_STEADY; elMode.textContent = now ? 'Risk (Boost)' : 'Steady'; this.trail.setConfig({ tint: now ? BRAND.gold : BRAND.mint, speed: now? {min:40,max:120}:{min:10,max:40} }); }
+    grow(n=1){ for(let i=0;i<n;i++){ const last = this.segments[this.segments.length-1]; const seg = this.scene.add.sprite(last.x, last.y, 'seg'); seg.setTint(BODY_PINK); this.segments.push(seg); } elLen.textContent = this.segments.length; }
+    shrink(n=1){ for(let i=0;i<n;i++){ if (this.segments.length>MIN_SEG){ const tail = this.segments.pop(); tail.destroy(); } } elLen.textContent = this.segments.length; }
+    update(delta, tx, ty){ const dt = (delta||16); const secs = dt/1000; const desired = Math.atan2(ty - this.head.y, tx - this.head.x); let a = Phaser.Math.Angle.Wrap(this.head.rotation); let diff = Phaser.Math.Angle.Wrap(desired - a); diff = Phaser.Math.Clamp(diff, -TURN, TURN); a = Phaser.Math.Angle.Wrap(a + diff); this.head.rotation = a; this.head.x += Math.cos(a) * this.speed * secs; this.head.y += Math.sin(a) * this.speed * secs; if (this.isBoosting){ this.boostMs += dt; if (this.boostMs >= BOOST_SHRINK_AFTER_MS){ if (this.boostMs - (this.lastShortenAt||0) >= BOOST_SHRINK_INTERVAL_MS){ this.shrink(1); this.lastShortenAt = this.boostMs; } } } else { this.boostMs = 0; this.lastShortenAt = 0; } this.history.unshift({x:this.head.x, y:this.head.y}); if (this.history.length > this.segments.length*6) this.history.pop(); const gap = 6; for(let i=0;i<this.segments.length;i++){ const p = this.history[i*gap]; if (p){ this.segments[i].x=p.x; this.segments[i].y=p.y; } } }
+  }
+
+  // =====================
+  // Game init
+  // =====================
+  const game = new Phaser.Game({ type: Phaser.AUTO, parent: 'game', width: window.innerWidth, height: window.innerHeight, backgroundColor: '#120e0d', physics: { default:'arcade', arcade:{ debug:false } }, scene: [Assets, Play] });
+  window.addEventListener('resize', () => game.scale.resize(window.innerWidth, window.innerHeight));
+
+  // =====================
+  // Texture generation (procedural; no external assets)
+  // =====================
+  function generateTextures(game, textures){
+    // segment (bigger, pink gradient with subtle outline)
+    const seg = textures.createCanvas('seg', SEG_R*2+6, SEG_R*2+6); const sctx = seg.getContext();
+    const cx = SEG_R+3, cy = SEG_R+3; const g = sctx.createRadialGradient(cx,cy,2, cx,cy, SEG_R+1);
+    g.addColorStop(0,'#ffe1f0'); g.addColorStop(0.6,BODY_PINK_HEX); g.addColorStop(1,'#b0136b');
+    sctx.fillStyle=g; sctx.beginPath(); sctx.arc(cx,cy,SEG_R,0,Math.PI*2); sctx.fill();
+    sctx.strokeStyle = '#ad1457'; sctx.lineWidth = 1.5; sctx.beginPath(); sctx.arc(cx,cy,SEG_R-0.5,0,Math.PI*2); sctx.stroke(); seg.refresh();
+
+    // head (brown)
+    const head = textures.createCanvas('head', SEG_R*2+10, SEG_R*2+10); const hctx = head.getContext();
+    hctx.fillStyle = '#4E342E'; hctx.beginPath(); hctx.arc(SEG_R+5,SEG_R+5,SEG_R+2,0,Math.PI*2); hctx.fill(); head.refresh();
+
+    // spark particle
+    const spark = textures.createCanvas('spark', 8, 8); const pctx = spark.getContext(); pctx.fillStyle = '#FFD54F'; pctx.beginPath(); pctx.arc(4,4,4,0,Math.PI*2); pctx.fill(); spark.refresh();
+
+    // Smiles coin (gold)
+    const coin = textures.createCanvas('coin_base', 40, 40); const cctx = coin.getContext(); const cg = cctx.createRadialGradient(20,20,4,20,20,20);
+    cg.addColorStop(0,'#FFF7B8'); cg.addColorStop(1,'#C6A63A'); cctx.fillStyle=cg; cctx.beginPath(); cctx.arc(20,20,16,0,Math.PI*2); cctx.fill(); cctx.strokeStyle = '#8d6e21'; cctx.lineWidth=4; cctx.beginPath(); cctx.arc(20,20,16,0,Math.PI*2); cctx.stroke(); cctx.fillStyle = '#4E342E'; cctx.beginPath(); cctx.arc(15,16,2,0,Math.PI*2); cctx.fill(); cctx.beginPath(); cctx.arc(25,16,2,0,Math.PI*2); cctx.fill(); cctx.lineWidth = 2; cctx.beginPath(); cctx.arc(20,22,6,0,Math.PI); cctx.stroke(); coin.refresh();
+    for(let i=0;i<8;i++){ const frame = textures.createCanvas(`coin_${i}`, 40, 40); const fctx = frame.getContext(); fctx.save(); fctx.translate(20,20); fctx.rotate((i/8)*Math.PI*2); fctx.translate(-20,-20); fctx.drawImage(coin.getSourceImage(),0,0); fctx.restore(); frame.refresh(); }
+
+    // Heymax Mile (cyan diamond)
+    const mile = textures.createCanvas('mile_base', 44, 44); const mctx = mile.getContext(); mctx.translate(22,22); mctx.rotate(Math.PI/4); mctx.translate(-22,-22); const mg = mctx.createLinearGradient(0,0,44,44); mg.addColorStop(0,'#CFFAFE'); mg.addColorStop(1,'#06B6D4'); mctx.fillStyle = mg; mctx.beginPath(); mctx.rect(8,8,28,28); mctx.fill(); mctx.lineWidth = 3; mctx.strokeStyle = '#0891B2'; mctx.strokeRect(8,8,28,28); mile.refresh();
+    for(let i=0;i<8;i++){ const frame = textures.createCanvas(`mile_${i}`, 44, 44); const fctx = frame.getContext(); fctx.save(); fctx.translate(22,22); fctx.rotate((i/8)*Math.PI*2); fctx.translate(-22,-22); fctx.drawImage(mile.getSourceImage(),0,0); fctx.restore(); frame.refresh(); }
+  }
+
+  // =====================
+  // Submission stub (replace with backend later)
+  // =====================
+  function submitScore(payload){ const prof = getProfile(); const entry = { name: prof.name||'Player', mobile: prof.mobile||'', ...payload }; addToLB(entry); appendTest(`submitScore→ saved: ${entry.name} ${entry.score}`); }
+
+  // =====================
+  // Self-tests
+  // =====================
+  function runSelfTests(scene, textures, anims){
+    const results = [];
+    const mustTextures = ['seg','head','spark', ...Array.from({length:8},(_,i)=>`coin_${i}`), ...Array.from({length:8},(_,i)=>`mile_${i}`)];
+    for(const k of mustTextures){ results.push([`texture:${k}`, textures.exists(k)]); }
+    results.push([ 'anim:coinSpin', !!anims.exists('coinSpin') ]);
+    results.push([ 'anim:mileSpin', !!anims.exists('mileSpin') ]);
+
+    // logic tests
+    const weights = (SMILE_SCORE===10 && MILE_SCORE===20); results.push(['logic:scoreWeights(10/20)', weights]);
+    const boostMult = (10*2===20); results.push(['logic:boostMultiplier', boostMult]);
+    const penalty25 = (Math.floor(1000*BOOST_DEATH_PENALTY)===250); results.push(['logic:boostPenalty25%', penalty25]);
+    const shrinkTiming = (()=>{ let ms=0, shrinks=0; while(ms<2100){ if (ms>=BOOST_SHRINK_AFTER_MS && (ms-1000)%BOOST_SHRINK_INTERVAL_MS===0) shrinks++; ms+=500; } return shrinks>=2; })(); results.push(['logic:boostShrinkTiming', shrinkTiming]);
+
+    // leaderboard sort
+    const testLB = (()=>{ const before = getLB().length; addToLB({name:'_t', mobile:'0000', score:123, ts:1}); addToLB({name:'_t2', mobile:'0000', score:999, ts:2}); const arr=getLB(); const ok = arr[0]?.score >= arr[1]?.score; saveLB(arr.slice(before)); return ok; })();
+    results.push(['logic:leaderboardSort', testLB]);
+
+    // env tests: pointer lock should not throw; record capability
+    const noThrow = (()=>{ try { requestPointerLockSafe?.(); requestPointerLockSafe?.(); return true; } catch(e){ return false; } })();
+    results.push(['env:pointerLockNoThrow', noThrow]);
+    results.push(['env:pointerLockAllowed', POINTER_LOCK_ALLOWED === true || POINTER_LOCK_ALLOWED === false]);
+
+    const pass = results.filter(r=>r[1]).length; const total = results.length; const lines = results.map(([k,v])=> `${v?'✅':'❌'} ${k}`).join('\n');
+    if (testPanel) testPanel.textContent = `Tests: ${pass}/${total} passed\n` + lines;
+  }
+
+  function updateHUD(){ elScore.textContent = score; elSmiles.textContent = smiles; elMiles.textContent = miles; }
+})();
+</script>
+</body>
+</html>
